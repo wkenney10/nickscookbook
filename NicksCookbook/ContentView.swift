@@ -9,7 +9,9 @@ struct ContentView: View {
     @State private var showCamera = false
     @State private var showSettings = false
     @State private var showMoreRecipesSheet = false
+    @State private var showManualInput = false
     @State private var imagePickerSource: UIImagePickerController.SourceType = .photoLibrary
+    @State private var editingIngredients = false
 
     var body: some View {
         NavigationStack {
@@ -20,7 +22,7 @@ struct ContentView: View {
 
                 ScrollView {
                     VStack(spacing: 0) {
-                        // Header photo area
+                        // Header photo area (or logo when no photo)
                         photoSection
 
                         if viewModel.isAnalyzing {
@@ -56,9 +58,10 @@ struct ContentView: View {
                     }
                 }
 
-                if viewModel.selectedImage != nil && !viewModel.isAnalyzing {
+                if viewModel.hasAnalyzed && !viewModel.isAnalyzing {
                     ToolbarItem(placement: .navigationBarLeading) {
-                        Button("New Photo") {
+                        Button("Start Over") {
+                            editingIngredients = false
                             viewModel.reset()
                         }
                         .foregroundColor(.orange)
@@ -69,6 +72,10 @@ struct ContentView: View {
                 ImagePickerView(sourceType: imagePickerSource) { image in
                     Task { await viewModel.analyzeImage(image) }
                 }
+            }
+            .sheet(isPresented: $showManualInput) {
+                ManualIngredientsView()
+                    .environmentObject(viewModel)
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
@@ -108,8 +115,8 @@ struct ContentView: View {
                         }
                         .padding(12)
                     }
-            } else {
-                // Empty state — prompt to take photo
+            } else if !viewModel.hasAnalyzed {
+                // Empty state — prompt to take photo or type
                 emptyStateView
             }
         }
@@ -117,25 +124,18 @@ struct ContentView: View {
 
     private var emptyStateView: some View {
         VStack(spacing: 24) {
-            Spacer(minLength: 40)
+            Spacer(minLength: 32)
 
-            Image(systemName: "refrigerator")
-                .font(.system(size: 80))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [.orange, .yellow],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .symbolEffect(.pulse)
+            // Nick's cartoon logo
+            NickLogoView(size: 110)
+                .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
 
             VStack(spacing: 8) {
                 Text("Nick's Cookbook")
                     .font(.title.bold())
                     .foregroundColor(.primary)
 
-                Text("Snap a photo of your fridge and\nwe'll craft recipes from what's inside.")
+                Text("Snap a photo of your fridge or type\nyour ingredients — we'll craft recipes from what you have.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -162,12 +162,20 @@ struct ContentView: View {
                     imagePickerSource = .photoLibrary
                     showImagePicker = true
                 }
+
+                PhotoButton(
+                    title: "Type or Speak Ingredients",
+                    systemImage: "keyboard",
+                    color: Color(red: 0.3, green: 0.6, blue: 0.3)
+                ) {
+                    showManualInput = true
+                }
             }
             .padding(.horizontal, 40)
 
-            Spacer(minLength: 40)
+            Spacer(minLength: 32)
         }
-        .frame(maxWidth: .infinity, minHeight: 400)
+        .frame(maxWidth: .infinity, minHeight: 480)
         .background(Color(.systemGroupedBackground))
     }
 
@@ -178,11 +186,13 @@ struct ContentView: View {
                 .tint(.orange)
 
             VStack(spacing: 6) {
-                Text("Analyzing your fridge...")
+                Text(viewModel.inputMode == .text ? "Finding your recipes…" : "Analyzing your fridge…")
                     .font(.headline)
                     .foregroundColor(.primary)
 
-                Text("Identifying ingredients and crafting recipes")
+                Text(viewModel.inputMode == .text
+                     ? "Crafting recipes from your ingredient list"
+                     : "Identifying ingredients and crafting recipes")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
@@ -198,30 +208,86 @@ struct ContentView: View {
 
     private var ingredientsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // Header row
             HStack {
-                Label("Identified Ingredients", systemImage: "cart.fill")
-                    .font(.headline)
-                    .foregroundColor(.primary)
+                Label(
+                    viewModel.inputMode == .text ? "Your Ingredients" : "Identified Ingredients",
+                    systemImage: viewModel.inputMode == .text ? "list.bullet" : "cart.fill"
+                )
+                .font(.headline)
+                .foregroundColor(.primary)
+
                 Spacer()
+
                 Text("\(viewModel.identifiedIngredients.count) items")
                     .font(.caption)
                     .foregroundColor(.secondary)
+
+                Button(editingIngredients ? "Done" : "Edit") {
+                    withAnimation { editingIngredients.toggle() }
+                }
+                .font(.subheadline.weight(.medium))
+                .foregroundColor(.orange)
             }
             .padding(.horizontal)
             .padding(.top, 16)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(viewModel.identifiedIngredients, id: \.self) { ingredient in
-                        IngredientTag(name: ingredient)
-                    }
-                }
-                .padding(.horizontal)
+            if editingIngredients {
+                editableIngredients
+            } else {
+                readOnlyIngredients
             }
         }
         .padding(.bottom, 8)
         .background(Color(.systemBackground))
         .padding(.top, 8)
+    }
+
+    private var readOnlyIngredients: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(viewModel.identifiedIngredients, id: \.self) { ingredient in
+                    IngredientTag(name: ingredient)
+                }
+            }
+            .padding(.horizontal)
+        }
+    }
+
+    private var editableIngredients: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Editable tag flow — vertically stacked for easier editing
+            LazyVStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(viewModel.identifiedIngredients.enumerated()), id: \.offset) { index, ingredient in
+                    HStack(spacing: 6) {
+                        Text(ingredient.capitalized)
+                            .font(.caption.weight(.medium))
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.orange.opacity(0.12))
+                            .clipShape(Capsule())
+                            .overlay(Capsule().stroke(Color.orange.opacity(0.3), lineWidth: 1))
+
+                        Button {
+                            viewModel.removeIngredient(at: index)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.red.opacity(0.7))
+                                .font(.system(size: 16))
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal)
+
+            // Inline add field
+            AddIngredientField { newIngredient in
+                viewModel.addIngredient(newIngredient)
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+        }
     }
 
     private var recipesSection: some View {
@@ -282,9 +348,49 @@ struct ContentView: View {
     // MARK: - Helpers
 
     private func showPhotoOptions() {
-        // Show action sheet for camera vs library
         imagePickerSource = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
         showImagePicker = true
+    }
+}
+
+// MARK: - Add Ingredient Inline Field
+
+struct AddIngredientField: View {
+    let onAdd: (String) -> Void
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            TextField("Add ingredient…", text: $text)
+                .focused($focused)
+                .submitLabel(.done)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .onSubmit { submit() }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(focused ? Color.orange : Color(.systemGray4), lineWidth: 1.5)
+                )
+
+            Button(action: submit) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 28))
+                    .foregroundColor(text.trimmingCharacters(in: .whitespaces).isEmpty ? .gray : .orange)
+            }
+            .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+    }
+
+    private func submit() {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        onAdd(trimmed)
+        text = ""
     }
 }
 

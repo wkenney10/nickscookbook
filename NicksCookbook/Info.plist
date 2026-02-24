@@ -26,6 +26,10 @@
 	<string>Nick's Cookbook needs camera access to photograph your fridge and identify ingredients for recipe suggestions.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Nick's Cookbook needs photo library access so you can select a fridge photo to generate recipe ideas.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Nick's Cookbook uses speech recognition so you can voice-dictate your ingredient list.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Nick's Cookbook needs microphone access so you can speak your ingredients aloud.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

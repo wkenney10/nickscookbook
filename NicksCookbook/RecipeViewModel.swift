@@ -16,6 +16,7 @@ final class RecipeViewModel: ObservableObject {
     @Published var isLoadingMore = false
     @Published var errorMessage: String?
     @Published var hasAnalyzed = false
+    @Published var inputMode: InputMode = .photo
 
     // MARK: - API Key (persisted in UserDefaults)
 
@@ -52,6 +53,7 @@ final class RecipeViewModel: ObservableObject {
         }
 
         isAnalyzing = true
+        inputMode = .photo
         errorMessage = nil
         recipes = []
         identifiedIngredients = []
@@ -70,7 +72,40 @@ final class RecipeViewModel: ObservableObject {
         isAnalyzing = false
     }
 
+    /// Sends a typed/spoken ingredient list to Claude and generates 5 initial recipes.
+    func analyzeTextIngredients(_ ingredients: [String]) async {
+        guard let service = claudeService else {
+            errorMessage = "Please add your Anthropic API key in Settings (tap the gear icon)."
+            return
+        }
+
+        guard !ingredients.isEmpty else {
+            errorMessage = "Please add at least one ingredient."
+            return
+        }
+
+        isAnalyzing = true
+        inputMode = .text
+        errorMessage = nil
+        recipes = []
+        identifiedIngredients = []
+        selectedImage = nil
+        hasAnalyzed = false
+
+        do {
+            let (returnedIngredients, newRecipes) = try await service.analyzeTextIngredients(ingredients: ingredients)
+            identifiedIngredients = returnedIngredients.isEmpty ? ingredients : returnedIngredients
+            recipes = newRecipes
+            hasAnalyzed = true
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+
+        isAnalyzing = false
+    }
+
     /// Fetches 5 more recipes, optionally using the provided feedback.
+    /// Always passes the current (possibly edited) ingredient list so updates are reflected.
     func getMoreRecipes(feedback: String?) async {
         guard let service = claudeService else { return }
         guard hasAnalyzed else { return }
@@ -79,7 +114,7 @@ final class RecipeViewModel: ObservableObject {
         errorMessage = nil
 
         do {
-            let moreRecipes = try await service.getMoreRecipes(feedback: feedback)
+            let moreRecipes = try await service.getMoreRecipes(feedback: feedback, currentIngredients: identifiedIngredients)
             recipes.append(contentsOf: moreRecipes)
         } catch {
             errorMessage = error.localizedDescription
@@ -88,7 +123,21 @@ final class RecipeViewModel: ObservableObject {
         isLoadingMore = false
     }
 
-    /// Resets all state so the user can start over with a new photo.
+    /// Adds an ingredient to the identified list (deduplicated).
+    func addIngredient(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        guard !identifiedIngredients.contains(where: { $0.lowercased() == trimmed.lowercased() }) else { return }
+        identifiedIngredients.append(trimmed)
+    }
+
+    /// Removes an ingredient at the given index.
+    func removeIngredient(at index: Int) {
+        guard identifiedIngredients.indices.contains(index) else { return }
+        identifiedIngredients.remove(at: index)
+    }
+
+    /// Resets all state so the user can start over.
     func reset() {
         recipes = []
         identifiedIngredients = []
@@ -97,6 +146,7 @@ final class RecipeViewModel: ObservableObject {
         isLoadingMore = false
         errorMessage = nil
         hasAnalyzed = false
+        inputMode = .photo
     }
 
     // MARK: - Private
@@ -108,4 +158,11 @@ final class RecipeViewModel: ObservableObject {
         }
         claudeService = ClaudeService(apiKey: apiKey.trimmingCharacters(in: .whitespaces))
     }
+}
+
+// MARK: - Input Mode
+
+enum InputMode {
+    case photo
+    case text
 }

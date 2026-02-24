@@ -49,8 +49,32 @@ actor ClaudeService {
         return try parseRecipeResponse(responseText)
     }
 
+    /// Analyzes a plain-text ingredient list and returns 5 recipes (no image required).
+    func analyzeTextIngredients(ingredients: [String]) async throws -> (ingredients: [String], recipes: [Recipe]) {
+        conversationHistory = []
+
+        let ingredientList = ingredients.joined(separator: ", ")
+        let textContent: [String: Any] = [
+            "type": "text",
+            "text": textIngredientPrompt(ingredientList)
+        ]
+
+        let userMessage: [String: Any] = [
+            "role": "user",
+            "content": [textContent]
+        ]
+
+        conversationHistory.append(userMessage)
+
+        let responseText = try await callClaude(systemPrompt: systemPrompt())
+        conversationHistory.append(["role": "assistant", "content": responseText])
+
+        return try parseRecipeResponse(responseText)
+    }
+
     /// Requests 5 more recipes, optionally considering user feedback.
-    func getMoreRecipes(feedback: String?) async throws -> [Recipe] {
+    /// `currentIngredients` ensures any edits the user made to the ingredient list are honoured.
+    func getMoreRecipes(feedback: String?, currentIngredients: [String]) async throws -> [Recipe] {
         let feedbackClause: String
         if let feedback = feedback, !feedback.isEmpty {
             feedbackClause = " taking this feedback into account: \"\(feedback)\""
@@ -58,8 +82,12 @@ actor ClaudeService {
             feedbackClause = ""
         }
 
+        let ingredientList = currentIngredients.isEmpty
+            ? "the same ingredients identified earlier"
+            : currentIngredients.joined(separator: ", ")
+
         let prompt = """
-        Please suggest 5 more different recipes\(feedbackClause). Use the same fridge ingredients identified earlier, but do NOT repeat any recipes already provided. Aim for variety — different cuisines, cooking methods, and meal types.
+        Please suggest 5 more different recipes\(feedbackClause). Use these ingredients: \(ingredientList). Do NOT repeat any recipes already provided. Aim for variety — different cuisines, cooking methods, and meal types.
 
         Respond ONLY with valid JSON in this exact format:
         {
@@ -102,6 +130,36 @@ actor ClaudeService {
         - Be creative: suggest varied cuisines and cooking styles
         - Be encouraging: write appetizing descriptions that make recipes sound irresistible
         - Always respond with valid JSON only — no extra text before or after the JSON object
+        """
+    }
+
+    private func textIngredientPrompt(_ ingredientList: String) -> String {
+        """
+        I have these ingredients available: \(ingredientList)
+
+        Please suggest exactly 5 delicious, practical recipes using these ingredients (supplemented by common pantry staples like oil, salt, pepper, pasta, rice, etc.).
+
+        Respond ONLY with a valid JSON object in this exact format — no other text:
+        {
+            "identified_ingredients": [\(ingredientList.split(separator: ",").map { "\"\($0.trimmingCharacters(in: .whitespaces))\"" }.joined(separator: ", "))],
+            "recipes": [
+                {
+                    "name": "Recipe Name",
+                    "description": "Brief, appetizing description (2-3 sentences)",
+                    "ingredients": ["2 cups ingredient1", "1 tbsp ingredient2", ...],
+                    "instructions": ["Step 1: ...", "Step 2: ...", ...],
+                    "prep_time": "15 minutes",
+                    "cook_time": "25 minutes",
+                    "servings": 4
+                }
+            ]
+        }
+
+        Make sure:
+        - Each recipe uses primarily the listed ingredients
+        - Instructions are clear and numbered
+        - Times are realistic
+        - Variety across the 5 recipes (different meals, cuisines, complexity levels)
         """
     }
 
